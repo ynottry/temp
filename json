@@ -1,0 +1,35 @@
+// Sample JSON input
+var inputJson = '{"xyx":{"mgmt":[{"type":"vidm","vmname":"abc"}]},"abc":{"mgmt":[{"type":"vidm","vmname":"123"}]}}';
+
+// Function to extract all vidm names from the JSON object
+function extractVidmNames(obj, vidmNames) {
+    if (Array.isArray(obj)) {
+        for (var i = 0; i < obj.length; i++) {
+            extractVidmNames(obj[i], vidmNames);
+        }
+    } else if (typeof obj === 'object' && obj !== null) {
+        if (obj.type === 'vidm' && obj.vmname) {
+            vidmNames.push(obj.vmname);
+        }
+        for (var key in obj) {
+            if (obj.hasOwnProperty(key)) {
+                extractVidmNames(obj[key], vidmNames);
+            }
+        }
+    }
+}
+
+// Initialize an array to store vidm names
+var vidmNames = [];
+
+// Parse the input JSON string to an object
+var jsonObject = JSON.parse(inputJson);
+
+// Extract vidm names from the JSON object
+extractVidmNames(jsonObject, vidmNames);
+
+// Log the extracted vidm names
+System.log("Extracted vidm names: " + vidmNames.join(", "));
+
+// Return the extracted vidm names if needed
+return vidmNames;
