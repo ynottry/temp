@@ -5,17 +5,18 @@ function getVidmNames(jsonInput) {
             return [];
         }
         
-        let vidmNames = [];
+        var vidmNames = [];
         
         if (Array.isArray(obj)) {
-            for (let item of obj) {
-                vidmNames = vidmNames.concat(extractVidmNames(item, parentKey));
+            for (var i = 0; i < obj.length; i++) {
+                vidmNames = vidmNames.concat(extractVidmNames(obj[i], parentKey));
             }
         } else {
-            for (let key in obj) {
+            for (var key in obj) {
                 if (key === 'mgmt' && Array.isArray(obj[key])) {
-                    let count = 0;
-                    for (let item of obj[key]) {
+                    var count = 0;
+                    for (var j = 0; j < obj[key].length; j++) {
+                        var item = obj[key][j];
                         if (item.type === 'vidm') {
                             vidmNames.push({ name: item.vmname, parent: parentKey });
                             count++;
@@ -32,19 +33,19 @@ function getVidmNames(jsonInput) {
         return vidmNames;
     }
 
-    let reportParents = new Set();
-    let vidmNamesList = extractVidmNames(jsonInput, '');
+    var reportParents = new java.util.HashSet();
+    var vidmNamesList = extractVidmNames(jsonInput, '');
     
     return {
-        vidmNames: vidmNamesList.map(item => item.name),
+        vidmNames: vidmNamesList.map(function(item) { return item.name; }),
         parentsWithTwoVidm: Array.from(reportParents)
     };
 }
 
 // Example JSON input
-let jsonString = '{"xyz":{"mgmt":[{"type":"vidm","vmname":"abc"}]},"abc":{"mgmt":[{"type":"vidm","vmname":"123"},{"type":"vidm","vmname":"456"}]}}';
-let jsonObject = JSON.parse(jsonString);
+var jsonString = '{"xyz":{"mgmt":[{"type":"vidm","vmname":"abc"}]},"abc":{"mgmt":[{"type":"vidm","vmname":"123"},{"type":"vidm","vmname":"456"}]}}';
+var jsonObject = JSON.parse(jsonString);
 
-let result = getVidmNames(jsonObject);
+var result = getVidmNames(jsonObject);
 System.log("Vidm Names: " + result.vidmNames.join(', '));
 System.log("Parents with 2 vidm: " + result.parentsWithTwoVidm.join(', '));
