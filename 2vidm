@@ -1,51 +1,50 @@
-function getVidmNames(jsonInput) {
-    // Function to extract vidm names recursively
-    function extractVidmNames(obj, parentKey) {
-        if (typeof obj !== 'object' || obj === null) {
-            return [];
-        }
-        
-        var vidmNames = [];
-        
-        if (Array.isArray(obj)) {
-            for (var i = 0; i < obj.length; i++) {
-                vidmNames = vidmNames.concat(extractVidmNames(obj[i], parentKey));
-            }
-        } else {
-            for (var key in obj) {
-                if (key === 'mgmt' && Array.isArray(obj[key])) {
-                    var count = 0;
-                    for (var j = 0; j < obj[key].length; j++) {
-                        var item = obj[key][j];
-                        if (item.type === 'vidm') {
-                            vidmNames.push({ name: item.vmname, parent: parentKey });
-                            count++;
+// vRO Action to extract vidm names from JSON input
+// Input: jsonInput (string)
+// Output: Array of objects with node names and their corresponding vidm vmnames
+
+function extractVidmNames(jsonInput) {
+    // Parse the input JSON string
+    var jsonObject = JSON.parse(jsonInput);
+
+    // Function to recursively extract vidm vmnames from the JSON object
+    function findVidmNames(node, parentNode, result) {
+        for (var key in node) {
+            if (node.hasOwnProperty(key)) {
+                var value = node[key];
+                if (Array.isArray(value)) {
+                    value.forEach(function(item) {
+                        if (item.type === 'vidm' && item.vmname) {
+                            if (!result[parentNode]) {
+                                result[parentNode] = [];
+                            }
+                            result[parentNode].push(item.vmname);
                         }
-                    }
-                    if (count === 2) {
-                        reportParents.add(parentKey);
-                    }
-                } else {
-                    vidmNames = vidmNames.concat(extractVidmNames(obj[key], key));
+                    });
+                } else if (typeof value === 'object' && value !== null) {
+                    findVidmNames(value, key, result);
                 }
             }
         }
-        return vidmNames;
     }
 
-    var reportParents = new java.util.HashSet();
-    var vidmNamesList = extractVidmNames(jsonInput, '');
-    
-    return {
-        vidmNames: vidmNamesList.map(function(item) { return item.name; }),
-        parentsWithTwoVidm: Array.from(reportParents)
-    };
+    // Result object to store vidm vmnames by node
+    var result = {};
+
+    // Start the extraction from the root of the JSON object
+    findVidmNames(jsonObject, 'root', result);
+
+    // Convert result object to an array of objects
+    var output = [];
+    for (var node in result) {
+        if (result.hasOwnProperty(node)) {
+            output.push({ nodeName: node, vidmNames: result[node] });
+        }
+    }
+
+    return output;
 }
 
-// Example JSON input
-var jsonString = '{"xyz":{"mgmt":[{"type":"vidm","vmname":"abc"}]},"abc":{"mgmt":[{"type":"vidm","vmname":"123"},{"type":"vidm","vmname":"456"}]}}';
-var jsonObject = JSON.parse(jsonString);
-
-var result = getVidmNames(jsonObject);
-System.log("Vidm Names: " + result.vidmNames.join(', '));
-System.log("Parents with 2 vidm: " + result.parentsWithTwoVidm.join(', '));
+// Example input JSON
+var jsonInput = '{"xyz":{"mgmt":[{"type":"vidm","vmname":"abc"}]},"abc":{"mgmt":[{"type":"vidm","vmname":"123"}]}}';
+var result = extractVidmNames(jsonInput);
+System.log(JSON.stringify(result, null, 2));
