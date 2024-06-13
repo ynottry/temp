@@ -79,3 +79,48 @@ for (var key in vidmMap) {
         System.log("Key: " + key + ", vidm names: " + vidmMap[key].join(", "));
     }
 }
+
+// Function to extract all vidm names from the JSON object and map them to their keys
+function extractVidmNames(obj, parentKey, vidmMap) {
+    if (Array.isArray(obj)) {
+        for (var i = 0; i < obj.length; i++) {
+            extractVidmNames(obj[i], parentKey, vidmMap);
+        }
+    } else if (typeof obj === 'object' && obj !== null) {
+        if (obj.type === 'vidm' && obj.vmname) {
+            if (!vidmMap[parentKey]) {
+                vidmMap[parentKey] = [];
+            }
+            vidmMap[parentKey].push(obj.vmname);
+        }
+        for (var key in obj) {
+            if (obj.hasOwnProperty(key)) {
+                extractVidmNames(obj[key], key, vidmMap);
+            }
+        }
+    }
+}
+
+// Initialize an object to store vidm names mapped to their keys
+var vidmMap = {};
+
+// Parse the input JSON string to an object
+var jsonObject = JSON.parse(inputJson);
+
+// Extract vidm names from the JSON object and map them to their keys
+extractVidmNames(jsonObject, null, vidmMap);
+
+// Log the keys with exactly two vidm names
+for (var key in vidmMap) {
+    if (vidmMap.hasOwnProperty(key) && vidmMap[key].length === 2) {
+        System.log("Key with exactly 2 vidm names: " + key);
+    }
+}
+
+// Return the keys with exactly two vidm names if needed
+var keysWithTwoVidms = [];
+for (var key in vidmMap) {
+    if (vidmMap.hasOwnProperty(key) && vidmMap[key].length === 2) {
+        keysWithTwoVidms.push(key);
+    }
+}
