@@ -124,3 +124,55 @@ for (var key in vidmMap) {
         keysWithTwoVidms.push(key);
     }
 }
+
+
+/////////////////////////////////////
+
+
+// Sample JSON input
+var inputJson = '{"xyx":{"mgmt":[{"type":"vidm","vmname":"abc"}]},"abc":{"mgmt":[{"type":"vidm","vmname":"123"}]},"xyz":{"mgmt":[{"type":"vidm","vmname":"vidm1"},{"type":"vidm","vmname":"vidm2"}]}}';
+
+// Function to extract all vidm names from the JSON object and map them to their keys
+function extractVidmNames(obj, parentKey, vidmMap) {
+    if (Array.isArray(obj)) {
+        for (var i = 0; i < obj.length; i++) {
+            extractVidmNames(obj[i], parentKey, vidmMap);
+        }
+    } else if (typeof obj === 'object' && obj !== null) {
+        if (obj.type === 'vidm' && obj.vmname) {
+            if (!vidmMap[parentKey]) {
+                vidmMap[parentKey] = [];
+            }
+            vidmMap[parentKey].push(obj.vmname);
+        }
+        for (var key in obj) {
+            if (obj.hasOwnProperty(key)) {
+                extractVidmNames(obj[key], key, vidmMap);
+            }
+        }
+    }
+}
+
+// Initialize an object to store vidm names mapped to their keys
+var vidmMap = {};
+
+// Parse the input JSON string to an object
+var jsonObject = JSON.parse(inputJson);
+
+// Extract vidm names from the JSON object and map them to their keys
+extractVidmNames(jsonObject, null, vidmMap);
+
+// Filter the keys that have exactly 2 vidm names
+var keysWithTwoVidms = [];
+for (var key in vidmMap) {
+    if (vidmMap.hasOwnProperty(key) && vidmMap[key].length === 2) {
+        keysWithTwoVidms.push(key);
+    }
+}
+
+// Log the keys that have exactly 2 vidm names
+System.log("Keys with exactly 2 vidm names: " + keysWithTwoVidms.join(", "));
+
+// Return the keys with exactly 2 vidm names if needed
+return keysWithTwoVidms;
+
