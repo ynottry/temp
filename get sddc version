@@ -1,0 +1,62 @@
+// Import the necessary vRO libraries
+var HttpRestClient = System.getModule("com.vmware.library.vcaccafe.http-rest").HttpRestClient;
+var HttpRestRequest = System.getModule("com.vmware.library.vcaccafe.http-rest").HttpRestRequest;
+var HttpRestResponse = System.getModule("com.vmware.library.vcaccafe.http-rest").HttpRestResponse;
+
+// Define the base URL and authorization token
+var baseUrl = "https://sfo-vcf01.rainpole.io";
+var authToken = "Bearer etYWRta....";
+
+// Function to perform HTTP GET requests
+function performGetRequest(endpoint) {
+    var client = new HttpRestClient(baseUrl + endpoint);
+    var request = new HttpRestRequest();
+    request.setHeader("Authorization", authToken);
+    var response = client.execute(request);
+    return response;
+}
+
+// Function to parse JSON response
+function parseJsonResponse(response) {
+    return JSON.parse(response.contentAsString);
+}
+
+// Perform the first GET request to /v1/sddc-managers
+var sddcManagersResponse = performGetRequest("/v1/sddc-managers");
+if (sddcManagersResponse.statusCode !== 200) {
+    throw new Error("Failed to get SDDC managers: " + sddcManagersResponse.statusCode);
+}
+
+var sddcManagersData = parseJsonResponse(sddcManagersResponse);
+var sddcManagerVersion = sddcManagersData.elements[0].version;
+System.log("SDDC Manager Version: " + sddcManagerVersion);
+
+// Perform the second GET request to /v1/manifests
+var manifestsResponse = performGetRequest("/v1/manifests");
+if (manifestsResponse.statusCode !== 200) {
+    throw new Error("Failed to get manifests: " + manifestsResponse.statusCode);
+}
+
+var manifestsData = parseJsonResponse(manifestsResponse);
+var releases = manifestsData.releases[0].bom;
+
+// Extract the DOMAIN_MANAGER and HOST versions
+var domainManagerVersion, hostVersion;
+for (var i = 0; i < releases.length; i++) {
+    if (releases[i].name === "DOMAIN_MANAGER") {
+        domainManagerVersion = releases[i].version;
+    }
+    if (releases[i].name === "HOST") {
+        hostVersion = releases[i].version;
+    }
+}
+
+System.log("DOMAIN_MANAGER Version: " + domainManagerVersion);
+System.log("HOST Version: " + hostVersion);
+
+// Check if SDDC Manager version matches DOMAIN_MANAGER version
+if (sddcManagerVersion === domainManagerVersion) {
+    System.log("SDDC Manager version matches DOMAIN_MANAGER version.");
+} else {
+    System.log("SDDC Manager version does not match DOMAIN_MANAGER version.");
+}
