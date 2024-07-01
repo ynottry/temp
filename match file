@@ -1,0 +1,25 @@
+
+    // Define the new object with the host version
+    var newObject = {
+        "name": "Build",
+        "value": "Releasebuild-" + hostVersion
+    };
+
+    // Define the original JSON structure
+    var originalJson = []
+
+    // Recursive function to find and replace atLeast1object arrays
+    function replaceAtLeast1Object(obj) {
+        for (var key in obj) {
+            if (obj.hasOwnProperty(key)) {
+                if (key === "atLeast1object" && Array.isArray(obj[key])) {
+                    obj[key] = [newObject];
+                } else if (typeof obj[key] === "object") {
+                    replaceAtLeast1Object(obj[key]);
+                }
+            }
+        }
+    }
+
+    // Replace the atLeast1object arrays in the original JSON structure
+    replaceAtLeast1Object(originalJson);
