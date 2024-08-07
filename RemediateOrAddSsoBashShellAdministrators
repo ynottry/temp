@@ -1,0 +1,43 @@
+// Action: RemediateOrAddSsoBashShellAdministrators
+// Inputs: sdkConnection (VC:SdkConnection), configValue (string)
+
+// Required modules
+var ssoAdmin = sdkConnection.ssoAdmin;
+
+// Function to remediate config drift for ssoBashShellAdministrators
+function remediateOrAddSsoBashShellAdministrators(configValue) {
+    var ssoAdminGroupName = "ssoBashShellAdministrators";
+
+    // Retrieve existing members of ssoBashShellAdministrators
+    var ssoAdminGroup = ssoAdmin.findGroupByName(ssoAdminGroupName);
+    
+    if (!ssoAdminGroup) {
+        System.error("Group not found: " + ssoAdminGroupName);
+        return;
+    }
+
+    // Check if the config value already exists in the group
+    var members = ssoAdminGroup.members;
+    var memberExists = members.some(function(member) {
+        return member.toLowerCase() === configValue.toLowerCase();
+    });
+
+    if (memberExists) {
+        System.log("Config value already exists in the group: " + configValue);
+    } else {
+        System.log("Config value not found in the group. Adding: " + configValue);
+        addMemberToGroup(ssoAdminGroup, configValue);
+    }
+}
+
+function addMemberToGroup(group, member) {
+    try {
+        ssoAdmin.addGroupMember(group, member);
+        System.log("Successfully added member to group: " + member);
+    } catch (e) {
+        System.error("Failed to add member to group: " + member + ". Error: " + e.message);
+    }
+}
+
+// Execute the remediation function
+remediateOrAddSsoBashShellAdministrators(configValue);
