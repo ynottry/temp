@@ -1,0 +1,33 @@
+// Inputs
+var sddcApplianceFQDN = "sddc-appliance.example.com"; // FQDN of the parent SDDC appliance
+var sddcApplianceUsername = "root"; // Username for the parent SDDC appliance
+var sddcAppliancePassword = "password"; // Password for the parent SDDC appliance
+var vrliFQDN = "vrli-server.example.com"; // FQDN of the vRLI server
+
+// Function to check if vRLI is configured
+function isVrliConfigured() {
+    var sshCommand = "grep 'liagent' /etc/rsyslog.conf";
+    var result = runSSHCommand(sddcApplianceFQDN, sddcApplianceUsername, sddcAppliancePassword, sshCommand);
+    return result.indexOf("liagent") !== -1;
+}
+
+// Function to run an SSH command
+function runSSHCommand(host, username, password, command) {
+    var SSHCommandHelper = System.getModule("com.vmware.library.ssh").SSHCommandHelper;
+    var sshSession = new SSHCommandHelper();
+    sshSession.addCommand(command);
+    sshSession.executeCommand(username, password, host, 22);
+    var output = sshSession.getOutput();
+    sshSession.closeSession();
+    return output;
+}
+
+// Main script execution
+if (!isVrliConfigured()) {
+    System.log("vRLI is not configured. Configuring vRLI...");
+    var configureVrliCommand = "/opt/vmware/vcf/commonsvcs/scripts/install_li_agent.sh " + vrliFQDN;
+    var configureResult = runSSHCommand(sddcApplianceFQDN, sddcApplianceUsername, sddcAppliancePassword, configureVrliCommand);
+    System.log("vRLI configuration result: " + configureResult);
+} else {
+    System.log("vRLI is already configured.");
+}
