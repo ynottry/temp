@@ -1,0 +1,164 @@
+// vRO Action: remediateSsoBashShellAdministrators
+// Input parameters:
+// vCenterServer: vCAC:VCACHost - The vCenter server instance
+// ssoBashShellAdminValue: string - The value to set for ssoBashShellAdministrators
+
+function remediateSsoBashShellAdministrators(vCenterServer, ssoBashShellAdminValue) {
+    var vim3Service = vCenterServer.getVim3Service();
+    var vim3ServiceContent = vCenterServer.getVim3ServiceContent();
+
+    // Get the advanced settings manager
+    var advancedSettingsManager = vim3ServiceContent.advancedSettings;
+
+    // Find the setting
+    var setting = advancedSettingsManager.setting;
+    var found = false;
+
+    for (var i = 0; i < setting.length; i++) {
+        if (setting[i].key == "ssoBashShellAdministrators") {
+            setting[i].value = ssoBashShellAdminValue;
+            found = true;
+            break;
+        }
+    }
+
+    // If the setting is not found, create it
+    if (!found) {
+        var newSetting = new VcOptionValue();
+        newSetting.key = "ssoBashShellAdministrators";
+        newSetting.value = ssoBashShellAdminValue;
+        advancedSettingsManager.setting.push(newSetting);
+    }
+
+    // Reconfigure the advanced settings with the updated value
+    var spec = new VcOptionSpec();
+    spec.setting = advancedSettingsManager.setting;
+    vim3ServiceContent.advancedSettings.updateOptions(spec);
+
+    System.log("Configuration 'ssoBashShellAdministrators' has been set to '" + ssoBashShellAdminValue + "'.");
+    return "Remediation completed successfully.";
+}
+
+// Example usage
+var vCenterServer = ...; // Obtain vCenter server instance
+var ssoBashShellAdminValue = "cn=administrator,cn=users,dc=vsphere,dc=local";
+
+var result = remediateSsoBashShellAdministrators(vCenterServer, ssoBashShellAdminValue);
+System.log(result);
+
+
+
+// vRO Action: remediateVpxdHostPasswordLength
+// Input parameters:
+// vCenterServer: vCAC:VCACHost - The vCenter server instance
+
+function remediateVpxdHostPasswordLength(vCenterServer) {
+    var vim3Service = vCenterServer.getVim3Service();
+    var vim3ServiceContent = vCenterServer.getVim3ServiceContent();
+
+    // Get the advanced settings manager
+    var advancedSettingsManager = vim3ServiceContent.advancedSettings;
+
+    // Find the setting
+    var setting = advancedSettingsManager.setting;
+    var found = false;
+
+    for (var i = 0; i < setting.length; i++) {
+        if (setting[i].key == "config.vpxd.hostPasswordLength") {
+            setting[i].value = "32";
+            found = true;
+            break;
+        }
+    }
+
+    // If the setting is not found, create it
+    if (!found) {
+        var newSetting = new VcOptionValue();
+        newSetting.key = "config.vpxd.hostPasswordLength";
+        newSetting.value = "32";
+        advancedSettingsManager.setting.push(newSetting);
+    }
+
+    // Reconfigure the advanced settings with the updated value
+    var spec = new VcOptionSpec();
+    spec.setting = advancedSettingsManager.setting;
+    vim3ServiceContent.advancedSettings.updateOptions(spec);
+
+    System.log("Configuration 'config.vpxd.hostPasswordLength' has been set to 32.");
+    return "Remediation completed successfully.";
+}
+
+// Example usage
+var vCenterServer = ...; // Obtain vCenter server instance
+
+var result = remediateVpxdHostPasswordLength(vCenterServer);
+System.log(result);
+
+
+
+
+// vRO Action: remediateVcenterAlarmConfigDrift
+// Input parameters:
+// vCenterServer: vCAC:VCACHost - The vCenter server instance
+// alarmName: string - The name of the alarm to remediate or create
+// targetType: string - The target type for the alarm (e.g., "vCenter Server")
+// triggerValue: string - The trigger value for the alarm (e.g., "show as warning")
+
+function remediateVcenterAlarmConfigDrift(vCenterServer, alarmName, targetType, triggerValue) {
+    var alarmManager = vCenterServer.getAlarmManager();
+    var alarms = alarmManager.getAlarmState();
+
+    var found = false;
+
+    for (var i = 0; i < alarms.length; i++) {
+        var alarm = alarms[i];
+        if (alarm.info.name == alarmName && alarm.info.targetType == targetType) {
+            var spec = alarm.info.spec;
+            spec.enabled = true;
+
+            // Integrate settings
+            spec.expression.expressionDef.value = triggerValue;
+            spec.action.actionDef.value.sendEmail = false; // off
+            spec.action.actionDef.value.sendSNMP = false; // off
+            spec.action.actionDef.value.runScript = false; // off
+
+            alarmManager.reconfigureAlarm(alarm, spec);
+            System.log("Alarm " + alarmName + " on " + targetType + " has been remediated.");
+            found = true;
+            break;
+        }
+    }
+
+    // If the alarm is not found, create it
+    if (!found) {
+        var newAlarmSpec = new VcAlarmSpec();
+        newAlarmSpec.enabled = true;
+
+        var newAlarmExpression = new VcAlarmExpression();
+        newAlarmExpression.expressionDef.value = triggerValue;
+
+        var newAlarmAction = new VcAlarmAction();
+        newAlarmAction.actionDef.value.sendEmail = false; // off
+        newAlarmAction.actionDef.value.sendSNMP = false; // off
+        newAlarmAction.actionDef.value.runScript = false; // off
+
+        newAlarmSpec.expression = newAlarmExpression;
+        newAlarmSpec.action = newAlarmAction;
+        newAlarmSpec.name = alarmName;
+        newAlarmSpec.targetType = targetType;
+
+        alarmManager.createAlarm(newAlarmSpec);
+        System.log("Alarm " + alarmName + " on " + targetType + " has been created.");
+    }
+
+    return "Remediation completed successfully.";
+}
+
+// Example usage
+var vCenterServer = ...; // Obtain vCenter server instance
+var alarmName = "esx.problem.vmsyslogd.remote.failure";
+var targetType = "vCenter Server";
+var triggerValue = "show as warning";
+
+var result = remediateVcenterAlarmConfigDrift(vCenterServer, alarmName, targetType, triggerValue);
+System.log(result);
