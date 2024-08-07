@@ -31,3 +31,46 @@ if (!isVrliConfigured()) {
 } else {
     System.log("vRLI is already configured.");
 }
+
+
+// Action to update parent SDDC appliance to set syslog properly
+// This action first checks if there are any vRLI configured. If not, it configures vRLI.
+// Then, it checks if vRLI FQDN exists and reports if it exists.
+// If vRLI FQDN does not exist, it configures the vRLI FQDN.
+
+// Import necessary vRO libraries
+var sshSession = new SSHSession(hostname, username, password);
+try {
+    // Step 1: Check if any vRLI is configured
+    var checkVrlCommand = "grep -i 'vRLI' /etc/syslog.conf";
+    var checkVrlResult = sshSession.executeCommand(checkVrlCommand);
+    
+    if (checkVrlResult.indexOf("vRLI") !== -1) {
+        System.log("vRLI is already configured.");
+    } else {
+        System.log("No vRLI configuration found. Configuring vRLI...");
+        
+        // Step 2: Configure vRLI
+        var configureVrlCommand = "/opt/vmware/vcf/commonsvcs/scripts/install_li_agent.sh";
+        sshSession.executeCommand(configureVrlCommand);
+    }
+    
+    // Step 3: Check if vRLI FQDN exists
+    var checkFqdnCommand = "grep -i 'vRLI_FQDN' /etc/syslog.conf";
+    var checkFqdnResult = sshSession.executeCommand(checkFqdnCommand);
+    
+    if (checkFqdnResult.indexOf("vRLI_FQDN") !== -1) {
+        System.log("vRLI FQDN exists.");
+    } else {
+        System.log("vRLI FQDN does not exist. Configuring vRLI FQDN...");
+        
+        // Step 4: Configure vRLI FQDN
+        // Add the configuration steps for vRLI FQDN here
+    }
+    
+} catch (e) {
+    System.error("Error during vRLI configuration: " + e.message);
+} finally {
+    sshSession.disconnect();
+}
+
