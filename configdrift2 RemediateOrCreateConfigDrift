@@ -1,0 +1,98 @@
+// Action: RemediateOrCreateConfigDrift
+// Inputs: sdkConnection (VC:SdkConnection), alarmName (string)
+
+// Required modules
+var AlarmManager = sdkConnection.alarmManager;
+var AlarmSpec = new VcAlarmSpec();
+
+// Function to remediate config drift for vCenter alarm
+function remediateOrCreateConfigDrift(alarmName) {
+    var targetType = "vcenter server";
+
+    // Retrieve existing alarms
+    var alarms = AlarmManager.getAlarm(alarmName);
+    
+    // Find the specific alarm based on the name and target type
+    var alarm = alarms.filter(function(al) {
+        return al.name === alarmName && al.entity.type === targetType;
+    })[0];
+
+    if (alarm) {
+        System.log("Alarm found: " + alarmName);
+        updateAlarm(alarm);
+    } else {
+        System.log("Alarm not found: " + alarmName + ". Creating new alarm.");
+        createAlarm(alarmName);
+    }
+}
+
+function updateAlarm(alarm) {
+    alarm.enabled = true;
+    alarm.expression.expression = "trigger";
+    alarm.actionList = []; // Clear existing actions
+    
+    // Set the required settings
+    var showWarningAction = new VcAlarmAction();
+    showWarningAction.action = "showWarning";
+    
+    var sendEmailNotificationAction = new VcAlarmAction();
+    sendEmailNotificationAction.action = "sendEmailNotification";
+    sendEmailNotificationAction.enabled = false;
+
+    var sendSNMPTrapsAction = new VcAlarmAction();
+    sendSNMPTrapsAction.action = "sendSNMPTraps";
+    sendSNMPTrapsAction.enabled = false;
+    
+    var runScriptAction = new VcAlarmAction();
+    runScriptAction.action = "runScript";
+    runScriptAction.enabled = false;
+    
+    alarm.actionList.push(showWarningAction);
+    alarm.actionList.push(sendEmailNotificationAction);
+    alarm.actionList.push(sendSNMPTrapsAction);
+    alarm.actionList.push(runScriptAction);
+
+    // Save the updated alarm settings
+    AlarmManager.updateAlarm(alarm);
+    
+    System.log("Config drift remediated for alarm: " + alarm.name);
+}
+
+function createAlarm(alarmName) {
+    var alarmSpec = new VcAlarmSpec();
+    alarmSpec.name = alarmName;
+    alarmSpec.description = "Automatically created alarm for config drift remediation";
+    alarmSpec.enabled = true;
+
+    var showWarningAction = new VcAlarmAction();
+    showWarningAction.action = "showWarning";
+    
+    var sendEmailNotificationAction = new VcAlarmAction();
+    sendEmailNotificationAction.action = "sendEmailNotification";
+    sendEmailNotificationAction.enabled = false;
+
+    var sendSNMPTrapsAction = new VcAlarmAction();
+    sendSNMPTrapsAction.action = "sendSNMPTraps";
+    sendSNMPTrapsAction.enabled = false;
+    
+    var runScriptAction = new VcAlarmAction();
+    runScriptAction.action = "runScript";
+    runScriptAction.enabled = false;
+    
+    alarmSpec.actionList.push(showWarningAction);
+    alarmSpec.actionList.push(sendEmailNotificationAction);
+    alarmSpec.actionList.push(sendSNMPTrapsAction);
+    alarmSpec.actionList.push(runScriptAction);
+
+    // Define target for the alarm
+    var target = sdkConnection.vim3Target;
+    alarmSpec.entity = target;
+
+    // Create the alarm
+    AlarmManager.createAlarm(target, alarmSpec);
+    
+    System.log("New alarm created: " + alarmName);
+}
+
+// Execute the remediation or creation function
+remediateOrCreateConfigDrift(alarmName);
