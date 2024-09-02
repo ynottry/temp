@@ -1,3 +1,5 @@
+//validateAndFixLogInsightAgentConfig
+
 // Required parameters for the function
 // @param {string} fqdn - The FQDN of the SDDC Manager appliance
 // @param {string} username - The username to log into the SDDC Manager appliance
@@ -83,3 +85,80 @@ validateAndFixLogInsightAgentConfig(
     "cfapi", 
     false
 );
+
+
+
+// Required parameters for the function
+// @param {string} fqdn - The FQDN of the SDDC Manager appliance
+// @param {string} username - The username to log into the SDDC Manager appliance
+// @param {SecureString} password - The password to log into the SDDC Manager appliance
+// @param {string} expectedHostname - The expected hostname of the Log Insight server
+// @param {number} expectedPort - The expected port for the Log Insight server
+// @param {string} expectedProtocol - The expected protocol (cfapi or syslog)
+// @param {boolean} expectedSsl - The expected SSL setting (true for yes, false for no)
+
+function validateAndFixLogInsightAgentConfig(fqdn, username, password, expectedHostname, expectedPort, expectedProtocol, expectedSsl) {
+    // Create an SSH session to the SDDC Manager appliance
+    var sshSession = new SSHSession(fqdn, username);
+
+    try {
+        // Connect to the appliance
+        sshSession.connect(password);
+
+        // Command to view the liagent.ini file
+        var command = "cat /var/lib/loginsight-agent/liagent.ini";
+        var output = sshSession.executeCommand(command);
+
+        // Initialize a flag to track if changes are needed
+        var needsUpdate = false;
+
+        // Build the new content for the liagent.ini file if necessary
+        var newContent = output;
+
+        if (output.indexOf("hostname=" + expectedHostname) === -1) {
+            System.log("Updating hostname in liagent.ini to: " + expectedHostname);
+            newContent = newContent.replace(/hostname=.*/, "hostname=" + expectedHostname);
+            needsUpdate = true;
+        }
+        if (output.indexOf("port=" + expectedPort) === -1) {
+            System.log("Updating port in liagent.ini to: " + expectedPort);
+            newContent = newContent.replace(/port=.*/, "port=" + expectedPort);
+            needsUpdate = true;
+        }
+        if (output.indexOf("proto=" + expectedProtocol) === -1) {
+            System.log("Updating protocol in liagent.ini to: " + expectedProtocol);
+            newContent = newContent.replace(/proto=.*/, "proto=" + expectedProtocol);
+            needsUpdate = true;
+        }
+        var sslValue = expectedSsl ? "yes" : "no";
+        if (output.indexOf("ssl=" + sslValue) === -1) {
+            System.log("Updating SSL setting in liagent.ini to: " + sslValue);
+            newContent = newContent.replace(/ssl=.*/, "ssl=" + sslValue);
+            needsUpdate = true;
+        }
+
+        // If changes are needed, write the new content back to the liagent.ini file
+        if (needsUpdate) {
+            System.log("Applying changes to liagent.ini");
+            sshSession.executeCommand("echo '" + newContent + "' > /var/lib/loginsight-agent/liagent.ini");
+
+            // Restart the Log Insight agent
+            System.log("Restarting Log Insight agent...");
+            sshSession.executeCommand("/etc/init.d/liagentd restart");
+        } else {
+            System.log("No changes needed, configuration is correct.");
+        }
+
+        // Check the status of the Log Insight agent
+        var statusCommand = "/etc/init.d/liagentd status";
+        var statusOutput = sshSession.executeCommand(statusCommand);
+        System.log("Log Insight agent status: " + statusOutput);
+
+    } catch (ex) {
+        System.error("Error validating and fixing Log Insight agent configuration: " + ex);
+        throw ex;
+    } finally {
+        // Close the SSH session
+        sshSession.disconnect();
+    }
+}
