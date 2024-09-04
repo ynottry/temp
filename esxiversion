@@ -1,0 +1,28 @@
+function getManagementHostVersion(data) {
+    // Loop through the elements array
+    for (var i = 0; i < data.elements.length; i++) {
+        var element = data.elements[i];
+        
+        // Filter the 'ipadresses' array to find the management type
+        for (var j = 0; j < element.ipadresses.length; j++) {
+            var ip = element.ipadresses[j];
+            
+            if (ip.type === "management") {
+                // Return the ESXi version when management type is found
+                return element.esxiversion;
+            }
+        }
+    }
+    
+    // Return null if no management host is found
+    return null;
+}
+
+// Call the function to get the ESXi version for the first management host
+var esxiVersion = getManagementHostVersion(data);
+
+// Log the result for debugging
+System.log("ESXi Version of the management host: " + esxiVersion);
+
+// Return the ESXi version
+return esxiVersion;
