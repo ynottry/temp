@@ -1,0 +1,302 @@
+/**
+ * Title: Validate Cluster Availability & Auto-Tag (REST API Version)
+ * Description: Checks a specific cluster's health and tags it using vCenter REST API if unavailable.
+ * Author: Gemini
+ * Version: 3.0.0 (Inputs Updated)
+ * * * Inputs:
+ * - vCenter (VC:SdkConnection): The vCenter connection object to check.
+ * - clusterName (String): The name of the cluster to validate.
+ * - tagName (String): The name of the tag to apply (e.g., "Status:Unavailable").
+ * - tagCategory (String): The category for the tag (e.g., "Cluster_Health").
+ * - vcUsername (String): vCenter Username (e.g., administrator@vsphere.local) for REST API.
+ * - vcPassword (SecureString): vCenter Password for REST API.
+ */
+
+// =========================================================================
+// MAIN EXECUTION FLOW
+// =========================================================================
+
+try {
+    System.log("=== Starting Cluster Validation Workflow (REST Mode) ===");
+
+    // 1. Validate Inputs
+    if (!vCenter) throw new Error("Input 'vCenter' (VC:SdkConnection) is missing.");
+    if (!clusterName) throw new Error("Input 'clusterName' is missing.");
+    if (!tagName) throw new Error("Input 'tagName' is missing.");
+    if (!tagCategory) throw new Error("Input 'tagCategory' is missing.");
+    if (!vcUsername) throw new Error("Input 'vcUsername' is missing.");
+    if (!vcPassword) throw new Error("Input 'vcPassword' is missing.");
+
+    System.log("Target vCenter: " + vCenter.name);
+    System.log("Target Cluster: " + clusterName);
+
+    // 2. Find the Cluster Object (In the specific vCenter provided)
+    var clusterObj = findClusterInVcenter(vCenter, clusterName);
+    if (!clusterObj) {
+        throw new Error("Cluster '" + clusterName + "' not found in vCenter '" + vCenter.name + "'.");
+    }
+    System.log("Found Cluster: " + clusterObj.name + " (MoRef: " + clusterObj.id + ")");
+
+    // 3. Check Availability Logic
+    var isAvailable = validateClusterAvailability(clusterObj);
+
+    if (isAvailable) {
+        System.log("SUCCESS: Cluster '" + clusterName + "' is AVAILABLE and Healthy.");
+    } else {
+        System.warn("ALERT: Cluster '" + clusterName + "' is NOT AVAILABLE. Initiating REST Tagging Sequence...");
+        
+        // 4. Tag the Cluster using REST API with provided inputs
+        tagClusterRest(clusterObj, vcUsername, vcPassword, tagName, tagCategory);
+    }
+
+    System.log("=== Workflow Completed Successfully ===");
+
+} catch (e) {
+    System.error("CRITICAL ERROR: " + e);
+    throw e;
+}
+
+
+// =========================================================================
+// HELPER FUNCTIONS (Business Logic)
+// =========================================================================
+
+function findClusterInVcenter(sdkConnection, name) {
+    try {
+        var clusters = sdkConnection.getAllClusterComputeResources();
+        for each (var cluster in clusters) {
+            if (cluster.name === name) return cluster;
+        }
+    } catch (ex) { 
+        System.warn("Error searching vCenter: " + ex); 
+    }
+    return null;
+}
+
+function validateClusterAvailability(cluster) {
+    var status = cluster.overallStatus; // green, yellow, red, gray
+    
+    // Critera 1: Health Status
+    if (status === "red" || status === "gray") {
+        System.warn("Validation Failed: Cluster status is " + status);
+        return false;
+    }
+
+    // Criteria 2: Host Count
+    var hosts = cluster.host;
+    if (!hosts || hosts.length === 0) {
+        System.warn("Validation Failed: Cluster has 0 hosts.");
+        return false;
+    }
+
+    // Criteria 3: Active Hosts (Connected & Not in Maintenance)
+    var activeHosts = 0;
+    for each (var host in hosts) {
+        if (host.runtime.connectionState.value === "connected" && !host.runtime.inMaintenanceMode) {
+            activeHosts++;
+        }
+    }
+    
+    if (activeHosts === 0) {
+        System.warn("Validation Failed: No active hosts found.");
+        return false;
+    }
+
+    return true;
+}
+
+// =========================================================================
+// REST API TAGGING LOGIC
+// =========================================================================
+
+function tagClusterRest(clusterObj, user, pass, tag, category) {
+    // 1. Prepare Endpoint URL
+    var vcUrl = clusterObj.sdkConnection.optionValue[0].value; 
+    if (!vcUrl || vcUrl.indexOf("https") === -1) {
+        vcUrl = "https://" + clusterObj.sdkConnection.name.split(":")[0]; 
+    }
+    if (vcUrl.indexOf("/sdk") > -1) vcUrl = vcUrl.replace("/sdk", "");
+    
+    System.log("Connecting to vCenter REST API at: " + vcUrl);
+
+    // 2. Initialize REST Service
+    var api = new RestApiService(vcUrl);
+    
+    try {
+        // 3. Login
+        api.login(user, pass);
+
+        // 4. Ensure Category Exists
+        var catId = api.findCategoryByName(category);
+        if (!catId) {
+            System.log("Category '" + category + "' not found. Creating...");
+            catId = api.createCategory(category, "Created by vRO", "MULTIPLE");
+        } else {
+            System.log("Category '" + category + "' exists (ID: " + catId + ")");
+        }
+
+        // 5. Ensure Tag Exists
+        var tagId = api.findTagByName(tag, catId);
+        if (!tagId) {
+            System.log("Tag '" + tag + "' not found. Creating...");
+            tagId = api.createTag(tag, "Created by vRO", catId);
+        } else {
+            System.log("Tag '" + tag + "' exists (ID: " + tagId + ")");
+        }
+
+        // 6. Assign Tag
+        api.assignTag(tagId, clusterObj.id, "ClusterComputeResource");
+
+    } catch (restErr) {
+        throw "REST API Operation Failed: " + restErr;
+    } finally {
+        // 7. Logout / Cleanup
+        api.logout();
+    }
+}
+
+
+// =========================================================================
+// REST API SERVICE CLASS
+// =========================================================================
+
+function RestApiService(baseUrl) {
+    this.baseUrl = baseUrl;
+    this.sessionId = null;
+    
+    // Create Transient Host
+    this.host = RESTHostManager.createHost("TransientVC");
+    this.host.url = baseUrl;
+    this.host.hostVerification = false; 
+    this.host.proxyHost = null;
+
+    // --- Authentication ---
+    this.login = function(username, password) {
+        var request = this.host.createRequest("POST", "/rest/com/vmware/cis/session", null);
+        request.setCredentials(username, password);
+        
+        var response = request.execute();
+        this.validateResponse(response, "Login");
+        
+        var data = JSON.parse(response.contentAsString);
+        this.sessionId = data.value;
+        System.log("REST Session Authenticated.");
+    };
+
+    this.logout = function() {
+        if (this.sessionId) {
+            try {
+                var request = this.createRequest("DELETE", "/rest/com/vmware/cis/session", null);
+                request.execute();
+                System.log("REST Session Terminated.");
+            } catch(e) { /* Ignore logout errors */ }
+        }
+    };
+
+    // --- Core Methods ---
+    this.createRequest = function(method, endpoint, bodyObj) {
+        var request = this.host.createRequest(method, endpoint, bodyObj ? JSON.stringify(bodyObj) : null);
+        request.setHeader("vmware-api-session-id", this.sessionId);
+        request.setHeader("Content-Type", "application/json");
+        return request;
+    };
+
+    this.validateResponse = function(response, context) {
+        if (response.statusCode >= 400) {
+            throw context + " Failed [" + response.statusCode + "]: " + response.contentAsString;
+        }
+    };
+
+    // --- Tagging Specifics ---
+    
+    this.findCategoryByName = function(name) {
+        var req = this.createRequest("GET", "/rest/com/vmware/cis/tagging/category", null);
+        var res = req.execute();
+        this.validateResponse(res, "List Categories");
+        
+        var catIds = JSON.parse(res.contentAsString).value;
+        
+        for each (var id in catIds) {
+            var catReq = this.createRequest("GET", "/rest/com/vmware/cis/tagging/category/id:" + id, null);
+            var catRes = catReq.execute();
+            if (catRes.statusCode === 200) {
+                var catData = JSON.parse(catRes.contentAsString).value;
+                if (catData.name === name) return id;
+            }
+        }
+        return null;
+    };
+
+    this.createCategory = function(name, desc, cardinality) {
+        var payload = {
+            "create_spec": {
+                "name": name,
+                "description": desc,
+                "cardinality": cardinality, 
+                "associable_types": ["ClusterComputeResource"]
+            }
+        };
+        var req = this.createRequest("POST", "/rest/com/vmware/cis/tagging/category", payload);
+        var res = req.execute();
+        this.validateResponse(res, "Create Category");
+        return JSON.parse(res.contentAsString).value;
+    };
+
+    this.findTagByName = function(name, categoryId) {
+        var payload = { "category_id": categoryId };
+        var req = this.createRequest("GET", "/rest/com/vmware/cis/tagging/tag", null);
+        var res = req.execute();
+        this.validateResponse(res, "List Tags");
+        
+        var tagIds = JSON.parse(res.contentAsString).value;
+        for each (var id in tagIds) {
+            var tagReq = this.createRequest("GET", "/rest/com/vmware/cis/tagging/tag/id:" + id, null);
+            var tagRes = tagReq.execute();
+            if (tagRes.statusCode === 200) {
+                var tagData = JSON.parse(tagRes.contentAsString).value;
+                if (tagData.name === name && tagData.category_id === categoryId) return id;
+            }
+        }
+        return null;
+    };
+
+    this.createTag = function(name, desc, categoryId) {
+        var payload = {
+            "create_spec": {
+                "name": name,
+                "description": desc,
+                "category_id": categoryId
+            }
+        };
+        var req = this.createRequest("POST", "/rest/com/vmware/cis/tagging/tag", payload);
+        var res = req.execute();
+        this.validateResponse(res, "Create Tag");
+        return JSON.parse(res.contentAsString).value;
+    };
+
+    this.assignTag = function(tagId, objectId, objectType) {
+        var listReq = this.createRequest("POST", "/rest/com/vmware/cis/tagging/tag-association/id:" + tagId + "?~action=list-attached-objects", null);
+        var listRes = listReq.execute();
+        
+        if (listRes.statusCode === 200) {
+            var attachedObjs = JSON.parse(listRes.contentAsString).value;
+            for each (var obj in attachedObjs) {
+                if (obj.id === objectId) {
+                    System.log("Tag is already assigned. Skipping.");
+                    return;
+                }
+            }
+        }
+
+        var payload = {
+            "object_id": {
+                "id": objectId,
+                "type": objectType
+            }
+        };
+        var req = this.createRequest("POST", "/rest/com/vmware/cis/tagging/tag-association/id:" + tagId + "?~action=attach", payload);
+        var res = req.execute();
+        this.validateResponse(res, "Assign Tag");
+        System.log("SUCCESS: Tag Assigned to Cluster.");
+    };
+}
