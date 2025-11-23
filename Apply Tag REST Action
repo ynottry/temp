@@ -1,0 +1,208 @@
+/**
+ * Action: applyTagViaRest
+ * Description: Connects to vCenter via REST, ensures a Category/Tag exists, and assigns it to an object.
+ * Inputs: 
+ * - vCenter (VC:SdkConnection)
+ * - username (string)
+ * - password (SecureString)
+ * - tagName (string)
+ * - categoryName (string)
+ * - targetObj (VC:ManagedEntity) - The object to tag (Cluster, VM, etc.)
+ * Returns: void
+ */
+
+// --- Input Validation ---
+if (!vCenter) throw "Input 'vCenter' is missing.";
+if (!username) throw "Input 'username' is missing.";
+if (!password) throw "Input 'password' is missing.";
+if (!tagName) throw "Input 'tagName' is missing.";
+if (!categoryName) throw "Input 'categoryName' is missing.";
+if (!targetObj) throw "Input 'targetObj' is missing.";
+
+var sessionId = null;
+var host = null;
+
+try {
+    System.log("[applyTagViaRest] Starting REST Tagging for: " + targetObj.name);
+
+    // 1. Determine REST Endpoint URL
+    var vcUrl = getRestUrl(vCenter);
+    System.log("[applyTagViaRest] REST Endpoint: " + vcUrl);
+
+    // 2. Create Transient REST Host
+    host = RESTHostManager.createHost("TransientVC_" + System.nextUUID());
+    host.url = vcUrl;
+    host.hostVerification = false; // Bypass SSL for internal script simplicity
+    host.proxyHost = null;
+
+    // 3. Login
+    sessionId = restLogin(host, username, password);
+
+    // 4. Ensure Category
+    var catId = getCategoryId(host, sessionId, categoryName);
+    if (!catId) {
+        System.log("[applyTagViaRest] Category '" + categoryName + "' missing. Creating...");
+        catId = createCategory(host, sessionId, categoryName);
+    }
+
+    // 5. Ensure Tag
+    var tagId = getTagId(host, sessionId, tagName, catId);
+    if (!tagId) {
+        System.log("[applyTagViaRest] Tag '" + tagName + "' missing. Creating...");
+        tagId = createTag(host, sessionId, tagName, catId);
+    }
+
+    // 6. Assign Tag
+    // Mapping VC Types to VAPI Types (ClusterComputeResource is the same, but good to be explicit)
+    var vapiType = targetObj.vimType; 
+    // VC types usually match VAPI types, but verify specific mappings if using other objects.
+    
+    assignTag(host, sessionId, tagId, targetObj.id, vapiType);
+    System.log("[applyTagViaRest] Successfully tagged '" + targetObj.name + "' with '" + tagName + "'");
+
+} catch (e) {
+    System.error("[applyTagViaRest] FAILED: " + e);
+    throw new Error("REST Tagging Action Failed: " + e);
+} finally {
+    // 7. Logout (Critical Step)
+    if (sessionId && host) {
+        restLogout(host, sessionId);
+    }
+}
+
+// =========================================================================
+// INTERNAL HELPER FUNCTIONS (Private to this Action)
+// =========================================================================
+
+function getRestUrl(sdk) {
+    var url = null;
+    if (sdk.optionValue) {
+        for each (var opt in sdk.optionValue) {
+            if (opt.key === "Instance.Url") url = opt.value; // Try finding URL in options
+        }
+    }
+    if (!url) url = "https://" + sdk.name.split(":")[0]; // Fallback to connection name
+    if (url.indexOf("/sdk") > -1) url = url.replace("/sdk", "");
+    return url;
+}
+
+function executeRequest(host, method, url, body, token, opName) {
+    var request = host.createRequest(method, url, body ? JSON.stringify(body) : null);
+    request.setHeader("Content-Type", "application/json");
+    if (token) request.setHeader("vmware-api-session-id", token);
+
+    var response = request.execute();
+    
+    // Detailed Error Handling
+    if (response.statusCode >= 400) {
+        var errBody = response.contentAsString;
+        System.error("REST Error [" + opName + "] Status: " + response.statusCode);
+        System.error("Response: " + errBody);
+        
+        if (response.statusCode === 401) throw "Authentication Failed (401). Check credentials.";
+        if (response.statusCode === 403) throw "Permission Denied (403). User lacks privileges.";
+        if (response.statusCode === 404) throw "Resource Not Found (404): " + url;
+        
+        throw "API Error [" + opName + "]: " + response.statusCode + " - " + errBody;
+    }
+    
+    return response.contentAsString ? JSON.parse(response.contentAsString) : null;
+}
+
+function restLogin(host, user, pass) {
+    var request = host.createRequest("POST", "/rest/com/vmware/cis/session", null);
+    request.setCredentials(user, pass);
+    request.setHeader("Content-Type", "application/json");
+    
+    var response = request.execute();
+    if (response.statusCode !== 200) {
+        throw "Login Failed: " + response.statusCode + " " + response.contentAsString;
+    }
+    return JSON.parse(response.contentAsString).value;
+}
+
+function restLogout(host, token) {
+    try {
+        var request = host.createRequest("DELETE", "/rest/com/vmware/cis/session", null);
+        request.setHeader("vmware-api-session-id", token);
+        request.execute();
+        System.log("[Internal] Session logged out.");
+    } catch (ignore) {}
+}
+
+function getCategoryId(host, token, name) {
+    var res = executeRequest(host, "GET", "/rest/com/vmware/cis/tagging/category", null, token, "List Categories");
+    var ids = res.value;
+    
+    // Inefficient but necessary for older APIs without filter support
+    for each (var id in ids) {
+        var cat = executeRequest(host, "GET", "/rest/com/vmware/cis/tagging/category/id:" + id, null, token, "Get Category");
+        if (cat.value.name === name) return id;
+    }
+    return null;
+}
+
+function createCategory(host, token, name) {
+    var payload = {
+        "create_spec": {
+            "name": name,
+            "description": "Auto-created by vRO",
+            "cardinality": "MULTIPLE",
+            "associable_types": ["ClusterComputeResource", "VirtualMachine"] 
+        }
+    };
+    var res = executeRequest(host, "POST", "/rest/com/vmware/cis/tagging/category", payload, token, "Create Category");
+    return res.value;
+}
+
+function getTagId(host, token, name, catId) {
+    // List all tags in category (More efficient than global list)
+    var payload = { "category_id": catId };
+    // Note: The specific endpoint to list tags in a category often requires a POST action in some vSphere versions
+    // If standard GET /tag fails, we might need the action. Assuming standard list here for 7.0+
+    var res = executeRequest(host, "GET", "/rest/com/vmware/cis/tagging/tag", null, token, "List Tags");
+    var ids = res.value;
+
+    for each (var id in ids) {
+        var tag = executeRequest(host, "GET", "/rest/com/vmware/cis/tagging/tag/id:" + id, null, token, "Get Tag");
+        if (tag.value.name === name && tag.value.category_id === catId) return id;
+    }
+    return null;
+}
+
+function createTag(host, token, name, catId) {
+    var payload = {
+        "create_spec": {
+            "name": name,
+            "description": "Auto-created by vRO",
+            "category_id": catId
+        }
+    };
+    var res = executeRequest(host, "POST", "/rest/com/vmware/cis/tagging/tag", payload, token, "Create Tag");
+    return res.value;
+}
+
+function assignTag(host, token, tagId, objId, objType) {
+    // 1. Check existing
+    var listUrl = "/rest/com/vmware/cis/tagging/tag-association/id:" + tagId + "?~action=list-attached-objects";
+    var listRes = executeRequest(host, "POST", listUrl, null, token, "List Attached Objects");
+    
+    if (listRes.value) {
+        for each (var obj in listRes.value) {
+            if (obj.id === objId) {
+                System.log("[Internal] Tag already assigned. Skipping.");
+                return;
+            }
+        }
+    }
+
+    // 2. Attach
+    var attachUrl = "/rest/com/vmware/cis/tagging/tag-association/id:" + tagId + "?~action=attach";
+    var payload = {
+        "object_id": {
+            "id": objId,
+            "type": objType
+        }
+    };
+    executeRequest(host, "POST", attachUrl, payload, token, "Attach Tag");
+}
