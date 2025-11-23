@@ -1,0 +1,35 @@
+/**
+ * Action: findClusterByName
+ * Description: Locates a ClusterComputeResource in a specific vCenter.
+ * Inputs: 
+ * - vCenter (VC:SdkConnection)
+ * - clusterName (string)
+ * Returns: VC:ClusterComputeResource (or null if not found)
+ */
+
+if (!vCenter) throw new Error("[Action: findClusterByName] Input 'vCenter' is null.");
+if (!clusterName) throw new Error("[Action: findClusterByName] Input 'clusterName' is empty.");
+
+try {
+    System.log("[findClusterByName] Searching for cluster '" + clusterName + "' in vCenter: " + vCenter.name);
+
+    var clusters = vCenter.getAllClusterComputeResources();
+    if (!clusters) {
+        System.warn("[findClusterByName] No clusters found in this vCenter.");
+        return null;
+    }
+
+    for each (var cluster in clusters) {
+        if (cluster.name === clusterName) {
+            System.log("[findClusterByName] Found cluster: " + cluster.name + " (MoRef: " + cluster.id + ")");
+            return cluster;
+        }
+    }
+
+    System.warn("[findClusterByName] Cluster '" + clusterName + "' not found.");
+    return null;
+
+} catch (e) {
+    System.error("[findClusterByName] Critical Error: " + e);
+    throw new Error("Failed to search for cluster: " + e);
+}
