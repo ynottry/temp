@@ -1,0 +1,154 @@
+/**
+ * Action: listTagsForCluster
+ * Description: Lists all tag names attached to a specific cluster using REST API.
+ * Inputs: 
+ * - vCenter (VC:SdkConnection)
+ * - username (string)
+ * - password (SecureString)
+ * - clusterName (string)
+ * Returns: Array/string (List of Tag Names)
+ */
+
+// --- Input Validation ---
+if (!vCenter) throw "Input 'vCenter' is missing.";
+if (!username) throw "Input 'username' is missing.";
+if (!password) throw "Input 'password' is missing.";
+if (!clusterName) throw "Input 'clusterName' is missing.";
+
+var sessionId = null;
+var host = null;
+var tagNames = [];
+
+try {
+    System.log("[listTagsForCluster] Starting Tag Listing for Cluster: " + clusterName);
+
+    // 1. Find the Cluster Object to get the ID
+    var clusterObj = findClusterByName(vCenter, clusterName);
+    if (!clusterObj) {
+        throw "Cluster '" + clusterName + "' not found in the provided vCenter.";
+    }
+    System.log("[listTagsForCluster] Found Cluster MoRef: " + clusterObj.id);
+
+    // 2. Determine REST Endpoint URL
+    var vcUrl = getRestUrl(vCenter);
+    
+    // 3. Create Transient REST Host
+    host = RESTHostManager.createHost("TransientVC_List_" + System.nextUUID());
+    host.url = vcUrl;
+    host.hostVerification = false;
+    host.proxyHost = null;
+
+    // 4. Login
+    sessionId = restLogin(host, username, password);
+
+    // 5. Get Attached Tag IDs
+    var tagIds = getAttachedTagIds(host, sessionId, clusterObj.id, clusterObj.vimType);
+    
+    if (tagIds.length === 0) {
+        System.log("[listTagsForCluster] No tags found on this cluster.");
+        return [];
+    }
+
+    // 6. Resolve Tag IDs to Names
+    for each (var tId in tagIds) {
+        var name = getTagName(host, sessionId, tId);
+        if (name) {
+            tagNames.push(name);
+        }
+    }
+    
+    System.log("[listTagsForCluster] Found " + tagNames.length + " tags: " + tagNames.join(", "));
+    return tagNames;
+
+} catch (e) {
+    System.error("[listTagsForCluster] FAILED: " + e);
+    throw new Error("List Tags Action Failed: " + e);
+} finally {
+    // 7. Logout
+    if (sessionId && host) {
+        restLogout(host, sessionId);
+    }
+}
+
+// =========================================================================
+// INTERNAL HELPER FUNCTIONS
+// =========================================================================
+
+function findClusterByName(sdk, name) {
+    var clusters = sdk.getAllClusterComputeResources();
+    for each (var c in clusters) {
+        if (c.name === name) return c;
+    }
+    return null;
+}
+
+function getRestUrl(sdk) {
+    var url = null;
+    if (sdk.optionValue) {
+        for each (var opt in sdk.optionValue) {
+            if (opt.key === "Instance.Url") url = opt.value;
+        }
+    }
+    if (!url) url = "https://" + sdk.name.split(":")[0];
+    if (url.indexOf("/sdk") > -1) url = url.replace("/sdk", "");
+    return url;
+}
+
+function restLogin(host, user, pass) {
+    var request = host.createRequest("POST", "/rest/com/vmware/cis/session", null);
+    request.setCredentials(user, pass);
+    request.setHeader("Content-Type", "application/json");
+    
+    var response = request.execute();
+    if (response.statusCode !== 200) {
+        throw "Login Failed: " + response.statusCode + " " + response.contentAsString;
+    }
+    return JSON.parse(response.contentAsString).value;
+}
+
+function restLogout(host, token) {
+    try {
+        var request = host.createRequest("DELETE", "/rest/com/vmware/cis/session", null);
+        request.setHeader("vmware-api-session-id", token);
+        request.execute();
+    } catch (ignore) {}
+}
+
+function getAttachedTagIds(host, token, objId, objType) {
+    // Endpoint to list tags attached to a specific object
+    var url = "/rest/com/vmware/cis/tagging/tag-association?~action=list-attached-tags";
+    
+    var payload = {
+        "object_id": {
+            "id": objId,
+            "type": objType // e.g., "ClusterComputeResource"
+        }
+    };
+
+    var request = host.createRequest("POST", url, JSON.stringify(payload));
+    request.setHeader("vmware-api-session-id", token);
+    request.setHeader("Content-Type", "application/json");
+
+    var response = request.execute();
+    
+    if (response.statusCode === 200) {
+        return JSON.parse(response.contentAsString).value; // Returns array of Tag IDs
+    } else {
+        System.warn("Failed to get attached tags: " + response.statusCode + " - " + response.contentAsString);
+        return [];
+    }
+}
+
+function getTagName(host, token, tagId) {
+    var url = "/rest/com/vmware/cis/tagging/tag/id:" + tagId;
+    var request = host.createRequest("GET", url, null);
+    request.setHeader("vmware-api-session-id", token);
+    
+    var response = request.execute();
+    
+    if (response.statusCode === 200) {
+        var data = JSON.parse(response.contentAsString).value;
+        return data.name;
+    }
+    return null;
+}
