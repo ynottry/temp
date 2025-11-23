@@ -1,0 +1,171 @@
+// ==Workflow Name==
+// List All Tags on a Cluster (vCenter REST API - No VAPI)
+//
+// ==Inputs==
+// vcHost          (string)       - vCenter FQDN/IP (e.g. vc01.company.com)
+// vcUsername      (string)       - Username (e.g. administrator@vsphere.local)
+// vcPassword      (SecureString) - Password
+// clusterName     (string)       - Exact cluster name
+//
+// ==Output==
+// result (string) - Formatted list of tags attached + all tags in vCenter
+
+var vcHost      = "https://" + vcHost.trim();
+var vcUsername  = vcUsername;
+var vcPassword  = vcPassword;
+var clusterName = clusterName;
+
+var sessionId = null;
+var baseUrl   = vcHost + "/api";
+var result    = "";
+
+// Reusable REST function with full logging and error handling
+function restCall(method, url, body) {
+    var request = new RESTRequest();
+    request.method = method;
+    request.url = url;
+    request.contentType = "application/json";
+    
+    if (sessionId) {
+        request.setHeader("vmware-api-session-id", sessionId);
+    }
+    if (body) {
+        request.content = JSON.stringify(body);
+    }
+
+    System.log("REST " + method + " " + url);
+    if (body) System.log("Body: " + JSON.stringify(body));
+
+    var response = request.execute();
+    var status = response.statusCode;
+    var content = response.contentAsString;
+
+    if (status >= 200 && status < 300) {
+        System.log("Success: " + status);
+        return content ? JSON.parse(content) : null;
+    } else {
+        System.error("API Error " + status + ": " + content);
+        throw "REST API failed [" + status + "]: " + content;
+    }
+}
+
+try {
+    System.log("Starting List Tags workflow for cluster: " + clusterName);
+
+    // 1. Login
+    System.log("Authenticating to vCenter...");
+    var login = restCall("POST", baseUrl + "/session", {
+        username: vcUsername,
+        password: vcPassword.getValue ? vcPassword.getValue() : vcPassword
+    });
+    sessionId = login.value;
+    System.log("Login successful");
+
+    // 2. Find Cluster MOID
+    System.log("Finding cluster '" + clusterName + "'...");
+    var clusters = restCall("GET", baseUrl + "/vcenter/cluster");
+    var cluster = clusters.value.find(function(c) { return c.name === clusterName; });
+
+    if (!cluster) {
+        throw "Cluster '" + clusterName + "' not found!";
+    }
+    var clusterMoid = cluster.cluster;
+    System.log("Cluster found: " + cluster.name + " (MOID: " + clusterMoid + ")");
+
+    result += "CLUSTER: " + cluster.name + " (MOID: " + clusterMoid + ")\n";
+    result += "════════════════════════════════════════════════════\n\n";
+
+    // 3. Get ALL tags attached to this cluster
+    System.log("Retrieving tags attached to cluster...");
+    var attachedResp = restCall("GET", 
+        baseUrl + "/cis/tagging/tag-association?object_id=" + clusterMoid + "&type=ClusterComputeResource"
+    );
+    var attachedTagIds = attachedResp.value || [];
+
+    if (attachedTagIds.length === 0) {
+        result += "No tags are currently attached to this cluster.\n\n";
+    } else {
+        result += "TAGS ATTACHED TO THIS CLUSTER (" + attachedTagIds.length + "):\n";
+        result += "─────────────────────────────────────\n";
+
+        attachedTagIds.forEach(function(tagId) {
+            try {
+                var tagInfo = restCall("GET", baseUrl + "/cis/tagging/tag/" + tagId);
+                var tag = tagInfo.value;
+
+                // Get category name
+                var catInfo = restCall("GET", baseUrl + "/cis/tagging/category/" + tag.category_id);
+                var categoryName = catInfo.value.name;
+
+                result += "• " + tag.name + 
+                          "  (Category: " + categoryName + 
+                          ", ID: " + tagId + ")\n";
+                
+                System.log("Attached: " + tag.name + " [" + categoryName + "]");
+            } catch (e) {
+                result += "• [ERROR retrieving tag ID: " + tagId + "]\n";
+                System.warn("Could not retrieve details for tag ID: " + tagId);
+            }
+        });
+    }
+
+    // 4. List ALL tags in vCenter (optional full inventory)
+    result += "\n\nALL TAGS IN VCENTER (Total Count):\n";
+    result += "─────────────────────────────────────\n";
+
+    var allTags = restCall("GET", baseUrl + "/cis/tagging/tag");
+    var totalTags = allTags.value.length;
+    result += "Total tags in vCenter: " + totalTags + "\n\n";
+
+    // Group by category for better readability
+    var tagsByCategory = {};
+
+    allTags.value.forEach(function(t) {
+        var tagId = t.id;
+        try {
+            var tagDetail = restCall("GET", baseUrl + "/cis/tagging/tag/" + tagId);
+            var tag = tagDetail.value;
+            var catInfo = restCall("GET", baseUrl + "/cis/tagging/category/" + tag.category_id);
+            var catName = catInfo.value.name;
+
+            if (!tagsByCategory[catName]) {
+                tagsByCategory[catName] = [];
+            }
+            tagsByCategory[catName].push("  - " + tag.name + "  (ID: " + tagId + ")");
+        } catch (e) {
+            if (!tagsByCategory["<Unknown Category>"]) tagsByCategory["<Unknown Category>"] = [];
+            tagsByCategory["<Unknown Category>"].push("  - [Error] Tag ID: " + tagId);
+        }
+    });
+
+    for (var cat in tagsByCategory) {
+        result += cat + ":\n";
+        tagsByCategory[cat].sort().forEach(function(line) {
+            result += line + "\n";
+        });
+        result += "\n";
+    }
+
+    System.log("Tag listing completed successfully");
+
+} catch (error) {
+    System.error("Workflow failed: " + error);
+    result = "ERROR: " + error + "\n\n" + result;
+    throw error;
+
+} finally {
+    // Always logout
+    if (sessionId) {
+        try {
+            System.log("Logging out...");
+            restCall("DELETE", baseUrl + "/session", null);
+            System.log("Logged out");
+        } catch (e) {
+            System.warn("Logout failed: " + e);
+        }
+    }
+}
+
+// Final output
+System.log("=== FINAL RESULT ===\n" + result);
+return result;
