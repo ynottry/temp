@@ -1,0 +1,59 @@
+/**
+ * Action: validateClusterHealth
+ * Description: Validates cluster availability based on Status, Host Count, and Host Connection State.
+ * Inputs: 
+ * - cluster (VC:ClusterComputeResource)
+ * Returns: boolean (true = Available, false = Unavailable)
+ */
+
+if (!cluster) throw new Error("[Action: validateClusterHealth] Input 'cluster' is null.");
+
+try {
+    System.log("[validateClusterHealth] Validating health for cluster: " + cluster.name);
+
+    // 1. Check Overall Status (Green/Yellow are OK, Red/Gray are bad)
+    var status = cluster.overallStatus;
+    System.log("[validateClusterHealth] Current Overall Status: " + status);
+    
+    if (status === "red" || status === "gray") {
+        System.warn("[validateClusterHealth] FAILED: Cluster status is critical (" + status + ").");
+        return false;
+    }
+
+    // 2. Check for Hosts presence
+    var hosts = cluster.host;
+    if (!hosts || hosts.length === 0) {
+        System.warn("[validateClusterHealth] FAILED: Cluster is empty (0 hosts).");
+        return false;
+    }
+
+    // 3. Check for ACTIVE Hosts
+    // A cluster is only "Available" if it has at least one Connected host not in Maintenance Mode.
+    var activeHostCount = 0;
+    
+    for each (var host in hosts) {
+        try {
+            var connState = host.runtime.connectionState.value;
+            var inMaint = host.runtime.inMaintenanceMode;
+            
+            if (connState === "connected" && !inMaint) {
+                activeHostCount++;
+            }
+        } catch (hErr) {
+            System.warn("[validateClusterHealth] Error reading host state: " + hErr);
+            // Continue checking other hosts
+        }
+    }
+
+    if (activeHostCount === 0) {
+        System.warn("[validateClusterHealth] FAILED: No active hosts found (All disconnected or in maintenance).");
+        return false;
+    }
+
+    System.log("[validateClusterHealth] SUCCESS: Cluster is Healthy (" + activeHostCount + " active hosts).");
+    return true;
+
+} catch (e) {
+    System.error("[validateClusterHealth] Error during validation: " + e);
+    throw new Error("Cluster validation logic failed: " + e);
+}
