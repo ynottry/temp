@@ -1,0 +1,171 @@
+// ==Workflow Name==
+// Tag Cluster via vCenter REST API (No VAPI required)
+//
+// ==Inputs==
+// vcHost          (string)  - vCenter FQDN or IP (e.g. vc01.company.com)
+// vcUsername      (string)  - Username (e.g. administrator@vsphere.local)
+// vcPassword      (SecureString) - Password
+// clusterName     (string)  - Exact name of the cluster
+// tagCategoryName (string)  - Tag category (e.g. "Environment")
+// tagName         (string)  - Desired tag (e.g. "Production")
+//
+// ==Output==
+// result (string) - Summary of actions performed
+
+var vcHost          = "https://" + vcHost;  // Input: string
+var vcUsername      = vcUsername;          // Input: string
+var vcPassword      = vcPassword;          // Input: SecureString
+var clusterName     = clusterName;          // Input: string
+var tagCategoryName = tagCategoryName;      // Input: string
+var tagName         = tagName;              // Input: string
+
+var sessionId = null;
+var baseUrl = vcHost + "/api";
+var result = "";
+
+// Helper: REST call with error handling and logging
+function restCall(method, url, body) {
+    var request = new RESTRequest();
+    request.method = method;
+    request.url = url;
+    request.contentType = "application/json";
+
+    if (sessionId) {
+        request.setHeader("vmware-api-session-id", sessionId);
+    }
+    if (body) {
+        request.content = JSON.stringify(body);
+    }
+
+    System.log("REST " + method + " " + url);
+    if (body) System.log("Request body: " + JSON.stringify(body));
+
+    var response = request.execute();
+
+    var statusCode = response.statusCode;
+    var responseContent = response.contentAsString;
+
+    if (statusCode >= 200 && statusCode < 300) {
+        System.log("Success: " + statusCode);
+        if (responseContent && responseContent.trim() !== "") {
+            return JSON.parse(responseContent);
+        }
+        return null;
+    } else {
+        System.error("REST call failed: " + statusCode + " - " + responseContent);
+        throw "REST API Error: " + statusCode + " - " + responseContent;
+    }
+}
+
+try {
+    System.log("Starting cluster tagging workflow for cluster: " + clusterName);
+
+    // Step 1: Login and get session
+    System.log("Logging in to vCenter: " + vcHost);
+    var loginResponse = restCall("POST", baseUrl + "/session", {
+        "username": vcUsername,
+        "password": vcPassword.getValue ? vcPassword.getValue() : vcPassword
+    });
+    sessionId = loginResponse.value;
+    System.log("Login successful. Session ID obtained.");
+
+    // Step 2: Find Cluster MOID
+    System.log("Searching for cluster: " + clusterName);
+    var clusters = restCall("GET", baseUrl + "/vcenter/cluster");
+    var cluster = clusters.value.find(function(c) { return c.name === clusterName; });
+
+    if (!cluster) {
+        throw "Cluster '" + clusterName + "' not found in vCenter.";
+    }
+    var clusterMoid = cluster.cluster;
+    System.log("Cluster found: " + cluster.name + " (MOID: " + clusterMoid + ")");
+
+    // Step 3: Get or Create Tag Category
+    System.log("Looking for tag category: " + tagCategoryName);
+    var categories = restCall("GET", baseUrl + "/cis/tagging/category");
+    var category = categories.value.find(function(c) { return c.name === tagCategoryName; });
+
+    var categoryId;
+    if (category) {
+        categoryId = category.id;
+        System.log("Category found: " + categoryId);
+    } else {
+        System.warn("Category '" + tagCategoryName + "' not found. Creating...");
+        var createCatResp = restCall("POST", baseUrl + "/cis/tagging/category", {
+            "name": tagCategoryName,
+            "description": "Created by vRO workflow",
+            "cardinality": "SINGLE",
+            "associable_types": ["ClusterComputeResource"]
+        });
+        categoryId = createCatResp.value;
+        System.log("Category created: " + categoryId);
+        result += "Created tag category '" + tagCategoryName + "'. ";
+    }
+
+    // Step 4: Get or Create Tag
+    System.log("Looking for tag: " + tagName + " in category " + categoryId);
+    var tags = restCall("GET", baseUrl + "/cis/tagging/tag");
+    var existingTag = tags.value.find(function(t) {
+        return t.name === tagName && t.category_id === categoryId;
+    });
+
+    var tagId;
+    if (existingTag) {
+        tagId = existingTag.id;
+        System.log("Tag found: " + tagId);
+    } else {
+        System.warn("Tag '" + tagName + "' not found. Creating...");
+        var createTagResp = restCall("POST", baseUrl + "/cis/tagging/tag", {
+            "name": tagName,
+            "description": "Applied by vRO automation",
+            "category_id": categoryId
+        });
+        tagId = createTagResp.value;
+        System.log("Tag created: " + tagId);
+        result += "Created tag '" + tagName + "'. ";
+    }
+
+    // Step 5: Check if tag is already attached to cluster
+    System.log("Checking if tag is already attached to cluster...");
+    var attachedTagsResp = restCall("GET", baseUrl + "/cis/tagging/tag-association?object_id=" + clusterMoid + "&type=ClusterComputeResource");
+    var attachedTagIds = attachedTagsResp.value || [];
+
+    if (attachedTagIds.indexOf(tagId) !== -1) {
+        System.log("Tag '" + tagName + "' is already attached.");
+        result += "Tag '" + tagName + "' already attached to cluster.";
+    } else {
+        System.log("Attaching tag '" + tagName + "' to cluster...");
+        restCall("POST", baseUrl + "/cis/tagging/tag-association", {
+            "object_id": {
+                "id": clusterMoid,
+                "type": "ClusterComputeResource"
+            },
+            "tag_id": tagId
+        });
+        System.log("Tag attached successfully.");
+        result += "Tag '" + tagName + "' attached to cluster.";
+    }
+
+    System.log("Workflow completed successfully.");
+
+} catch (error) {
+    System.error("Workflow failed: " + error);
+    result = "ERROR: " + error;
+    throw error;
+
+} finally {
+    // Always logout
+    if (sessionId) {
+        try {
+            System.log("Logging out from vCenter...");
+            restCall("DELETE", baseUrl + "/session", null);
+            System.log("Logged out successfully.");
+        } catch, catch (e) {
+            System.warn("Failed to logout cleanly: " + e);
+        }
+    }
+    System.log("Final Result: " + result);
+}
+
+// Return result
+return result;
