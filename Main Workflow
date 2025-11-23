@@ -1,0 +1,58 @@
+/**
+ * Workflow: Manage Cluster Availability
+ * Description: Orchestrator script that ties the actions together.
+ * Inputs:
+ * - vCenter (VC:SdkConnection)
+ * - clusterName (string)
+ * - tagName (string)
+ * - tagCategory (string)
+ * - vcUsername (string)
+ * - vcPassword (SecureString)
+ */
+
+System.log("=== Workflow Started: Validate Cluster Availability ===");
+
+try {
+    // --- STEP 1: Find the Cluster ---
+    // Calling Action: com.yourcompany.cluster/findClusterByName
+    // Note: In vRO script editor, you would drag/drop the action to get System.getModule("...").actionName(...)
+    
+    var clusterObj = System.getModule("com.yourcompany.cluster").findClusterByName(vCenter, clusterName);
+    
+    if (!clusterObj) {
+        // If critical to stop here:
+        throw "Workflow cannot proceed: Cluster '" + clusterName + "' not found.";
+    }
+
+    // --- STEP 2: Validate Health ---
+    // Calling Action: com.yourcompany.cluster/validateClusterHealth
+    
+    var isHealthy = System.getModule("com.yourcompany.cluster").validateClusterHealth(clusterObj);
+
+    if (isHealthy) {
+        System.log("Result: Cluster is AVAILABLE. No action needed.");
+    } else {
+        System.warn("Result: Cluster is UNAVAILABLE. Proceeding to Tagging...");
+
+        // --- STEP 3: Apply Tag (if unhealthy) ---
+        // Calling Action: com.yourcompany.tagging/applyTagViaRest
+        
+        System.getModule("com.yourcompany.tagging").applyTagViaRest(
+            vCenter, 
+            vcUsername, 
+            vcPassword, 
+            tagName, 
+            tagCategory, 
+            clusterObj
+        );
+        
+        System.log("Correction applied: Cluster has been tagged as unavailable.");
+    }
+
+} catch (e) {
+    System.error("Workflow Execution Failed: " + e);
+    // Explicitly fail the workflow token
+    throw e;
+}
+
+System.log("=== Workflow Finished ===");
